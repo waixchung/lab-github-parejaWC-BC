@@ -1,0 +1,238 @@
+name: Evaluacion Automatica - Laboratorio GitHub Colaborativo
+
+on: [push]
+
+jobs:
+  evaluacion-git:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Descargar repositorio completo con historial
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Descarga todo el historial de commits y ramas
+
+      - name: 2. Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: 3. Ejecutar Evaluador de Colaboracion y AP
+        run: |
+          cat << 'EOF' > evaluate.py
+          import os, sys, json, subprocess, hashlib, urllib.request, re
+
+          # =========================================================================
+          # CONFIGURACIÓN DE SUPABASE (OPTATIVO)
+          # =========================================================================
+          SUPABASE_URL = "https://ikusdplwwvcbxgvevkvw.supabase.co"
+          SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlrdXNkcGx3d3ZjYnhndmV2a3Z3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5ODgyMjYsImV4cCI6MjEwNDU2NDIyNn0.TEA3ZOmZxv7zedc2hDZUaDoB0oGDVMXM2yh1M6D4YBc"
+
+          print("🔍 Iniciando evaluacion de colaboracion Git/GitHub...\n")
+
+          score = 0
+          report = []
+
+          # ==========================================
+          # CRITERIO 1: EVALUACIÓN DE EQUIPO.JSON (20 PTS)
+          # ==========================================
+          p1 = 0
+          if os.path.exists("equipo.json"):
+              try:
+                  with open("equipo.json", "r", encoding="utf-8") as f:
+                      data_equipo = json.load(f)
+                  
+                  user_a = data_equipo.get("integrante_a", {}).get("github_user", "")
+                  user_b = data_equipo.get("integrante_b", {}).get("github_user", "")
+
+                  if user_a and user_b and user_a != "PENDIENTE" and user_b != "PENDIENTE":
+                      p1 += 20
+                  else:
+                      report.append("  ❌ [equipo.json] Debe reemplazar 'PENDIENTE' por los usuarios reales de ambos integrantes.")
+              except Exception as e:
+                  report.append("  ❌ [equipo.json] El archivo JSON tiene errores de sintaxis.")
+          else:
+              report.append("  ❌ [equipo.json] No se encontró el archivo equipo.json.")
+
+          score += p1
+          print(f"1. Registro de Integrantes (equipo.json): {p1}/20 pts")
+
+          # ==========================================
+          # CRITERIO 2: DIVERSIDAD DE AUTORES EN COMMITS (20 PTS)
+          # ==========================================
+          p2 = 0
+          try:
+              log_authors = subprocess.check_output(["git", "log", "--format=%an <%ae>"], text=True)
+              authors_set = set([line.strip() for line in log_authors.strip().split("\n") if line.strip()])
+              
+              # Filtrar autores automáticos de GitHub Actions o Bots
+              human_authors = [a for a in authors_set if "github-actions" not in a.lower() and "bot" not in a.lower()]
+
+              if len(human_authors) >= 2:
+                  p2 += 20
+              else:
+                  report.append(f"  ❌ [Commits] Se requieren commits de al menos 2 autores distintos. Autores detectados: {len(human_authors)}")
+          except Exception as e:
+              report.append("  ❌ [Commits] Error al inspeccionar el historial de Git.")
+
+          score += p2
+          print(f"2. Múltiples Autores en Commits: {p2}/20 pts")
+
+          # ==========================================
+          # CRITERIO 3: EVALUACIÓN DE RAMAS / BRANCHES (20 PTS)
+          # ==========================================
+          p3 = 0
+          try:
+              # Obtener todas las ramas remota y locales
+              raw_branches = subprocess.check_output(["git", "branch", "-a"], text=True)
+              branches = [b.strip().replace("*", "").strip() for b in raw_branches.split("\n") if b.strip()]
+              
+              has_feature_a = any("feature-integrante-a" in b for b in branches)
+              has_feature_b = any("feature-integrante-b" in b for b in branches)
+
+              if has_feature_a or has_feature_b:
+                  p3 += 20
+              else:
+                  report.append("  ❌ [Ramas] No se detectaron las ramas 'feature-integrante-a' o 'feature-integrante-b' en el historial.")
+          except Exception as e:
+              report.append("  ❌ [Ramas] Error al consultar las ramas de Git.")
+
+          score += p3
+          print(f"3. Uso de Ramas de Características: {p3}/20 pts")
+
+          # ==========================================
+          # CRITERIO 4: RESOLUCIÓN DE CONFLICTO EN BITACORA.MD (20 PTS)
+          # ==========================================
+          p4 = 0
+          if os.path.exists("bitacora.md"):
+              with open("bitacora.md", "r", encoding="utf-8", errors="ignore") as f:
+                  bitacora_txt = f.read()
+
+              # Verificar que NO existan marcas inconclusas de conflicto
+              has_conflict_marks = "<<<<<<<" in bitacora_txt or "=======" in bitacora_txt or ">>>>>>>" in bitacora_txt
+              
+              # Verificar que contenga aportes de ambos integrantes
+              has_a = "Integrante A" in bitacora_txt or "integrante A" in bitacora_txt
+              has_b = "Integrante B" in bitacora_txt or "integrante B" in bitacora_txt
+
+              if not has_conflict_marks and (has_a and has_b):
+                  p4 += 20
+              elif has_conflict_marks:
+                  report.append("  ❌ [bitacora.md] Quedaron marcas de conflicto sin resolver (<<<<<<<, =======, >>>>>>>).")
+              else:
+                  report.append("  ❌ [bitacora.md] Falta incluir la información de ambos integrantes en el archivo resuelto.")
+          else:
+              report.append("  ❌ [bitacora.md] No se encontró el archivo bitacora.md.")
+
+          score += p4
+          print(f"4. Resolución de Conflicto en bitacora.md: {p4}/20 pts")
+
+          # ==========================================
+          # CRITERIO 5: REVISIÓN DE INTEGRIDAD DEL REPOSITORIO (20 PTS)
+          # ==========================================
+          p5 = 0
+          if p1 > 0 and p2 > 0 and p4 > 0:
+              p5 = 20
+          else:
+              report.append("  ❌ [Integridad] Se deben cumplir la mayoría de los pasos anteriores para validar la entrega completa.")
+
+          score += p5
+          print(f"5. Integridad del Flujo de Trabajo: {p5}/20 pts")
+
+          # ==========================================
+          # VERIFICACIÓN ANTI-PLAGIO VÍA SUPABASE
+          # ==========================================
+          repo_name = os.environ.get("GITHUB_REPOSITORY", "desconocido")
+
+          if SUPABASE_URL and SUPABASE_KEY and "http" in SUPABASE_URL:
+              print("\n🛡️ Conectando con SB para validación ap de Git...")
+              try:
+                  # Generar firma basada en la secuencia de hashes de los commits
+                  commit_hashes = subprocess.check_output(["git", "log", "--format=%H"], text=True).strip().replace("\n", "")
+                  git_hash = hashlib.sha256(commit_hashes.encode("utf-8")).hexdigest()
+
+                  # Consultar si el historial coincide con otro repositorio
+                  url_get = f"{SUPABASE_URL}/rest/v1/entregas_git?hash_commits=eq.{git_hash}"
+                  req_get = urllib.request.Request(
+                      url_get,
+                      headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+                  )
+                  with urllib.request.urlopen(req_get) as response:
+                      matches = json.loads(response.read().decode("utf-8"))
+
+                  es_copia = any(m.get("repositorio") != repo_name for m in matches)
+
+                  if es_copia:
+                      repo_original = next(m.get("repositorio") for m in matches if m.get("repositorio") != repo_name)
+                      print(f"🚨 ALERTA DE PLAGIO DETECTADA: El historial de commits es idéntico al de '{repo_original}'.")
+
+                      try:
+                          data_plagio = json.dumps({
+                              "repositorio_infractor": repo_name,
+                              "repositorio_original": repo_original,
+                              "hash_commits": git_hash
+                          }).encode("utf-8")
+
+                          req_log = urllib.request.Request(
+                              f"{SUPABASE_URL}/rest/v1/alertas_plagio_git",
+                              data=data_plagio,
+                              headers={
+                                  "apikey": SUPABASE_KEY,
+                                  "Authorization": f"Bearer {SUPABASE_KEY}",
+                                  "Content-Type": "application/json",
+                                  "Prefer": "return=minimal"
+                              },
+                              method="POST"
+                          )
+                          with urllib.request.urlopen(req_log) as _:
+                              pass
+                          print("📌 Incidencia registrada en la tabla 'alertas_plagio_git' de Supabase.")
+                      except Exception as err_log:
+                          print("❌ Error al guardar log en alertas_plagio_git:", err_log)
+
+                      report.append(f"  ❌ [PLAGIO DETECTADO] Historial de commits idéntico al del repositorio: {repo_original}")
+                      score = 0
+                  else:
+                      # Registrar primera entrega válida
+                      post_data = json.dumps({"repositorio": repo_name, "hash_commits": git_hash, "integrantes": f"{user_a},{user_b}"}).encode("utf-8")
+                      req_post = urllib.request.Request(
+                          f"{SUPABASE_URL}/rest/v1/entregas_git",
+                          data=post_data,
+                          headers={
+                              "apikey": SUPABASE_KEY,
+                              "Authorization": f"Bearer {SUPABASE_KEY}",
+                              "Content-Type": "application/json",
+                              "Prefer": "return=minimal"
+                          },
+                          method="POST"
+                      )
+                      with urllib.request.urlopen(req_post) as _:
+                          pass
+                      print(f"✅ Firma de historial Git registrada exitosamente para '{repo_name}'.")
+
+              except Exception as err_sp:
+                  print("❌ ERROR DE CONEXIÓN A SUPABASE:", err_sp)
+
+          # ==========================================
+          # RESULTADO FINAL Y DESGLOSE
+          # ==========================================
+          print("\n------------------------------------------")
+          print(f"📊 CALIFICACIÓN FINAL: {score} / 100 PTS")
+          print("------------------------------------------\n")
+
+          if report:
+              print("📌 Observaciones por corregir:")
+              for msg in report:
+                  print(msg)
+              print("\n")
+
+          if score < 71:
+              print("❌ EVALUACIÓN FALLIDA: Puntaje menor a 71 pts (Mínimo requerido para aprobar).")
+              sys.exit(1)
+
+          print("🎉 ¡FELICITACIONES! Laboratorio aprobado exitosamente.")
+          sys.exit(0)
+          EOF
+
+      - name: 4. Ejecutar Evaluacion
+        run: python evaluate.py
